@@ -8,24 +8,58 @@ Sistema simples para criar aliases e executar comandos de setup específicos por
 - ✅ **Comandos de setup**: Execute comandos automaticamente ao carregar a configuração  
 - ✅ **Busca automática**: Encontra configuração na raiz, `.vscode`, `.cursor`, `.venv`
 - ✅ **Compatibilidade**: Funciona com bash e zsh, versões antigas e novas
-- ✅ **Limpeza fácil**: Remove aliases carregados quando necessário
+- ✅ **Instalação simples**: Script de instalação automática
 
 ## Instalação
 
+### Instalação Automática (Recomendada)
+
+```bash
+# Clone o repositório
+git clone <link_do_repositório>
+cd tsetup
+
+# Execute o instalador
+./install.sh
+```
+
+O instalador vai:
+- Adicionar o diretório do tsetup ao seu PATH
+- Configurar o carregamento automático no seu shell (`.zshrc` ou `.bashrc`)
+- Tornar o script executável
+
+Após a instalação, reinicie o terminal ou execute:
+```bash
+source ~/.zshrc  # ou ~/.bashrc no Linux
+```
+
+### Instalação Manual
+
 1. Copie o arquivo `tsetup` para um local no seu PATH
 2. Torne-o executável: `chmod +x tsetup`
+3. Adicione ao seu `.zshrc` ou `.bashrc`:
+   ```bash
+   # tsetup - aliases por projeto
+   export PATH="/caminho/para/tsetupper:$PATH"
+   source tsetup
+   ```
 
 ## Uso Básico
 
+Após a instalação, o `tsetup` funciona automaticamente:
+
+1. **Navegue para qualquer projeto** que tenha um arquivo `.tsetup.json`
+2. **Os aliases são carregados automaticamente** quando você abre um terminal em um diretório com .tsetup.json
+3. **Use os aliases** definidos na configuração do projeto
+
+### Comandos Manuais (Opcionais)
+
 ```bash
-# Carregar configuração do projeto atual
+# Carregar configuração manualmente (se necessário)
 source tsetup
 
-# Ver o que seria executado (modo dry-run)
-source tsetup --print
-
-# Limpar aliases carregados anteriormente
-source tsetup --clear
+# Ver os comandos
+source tsetup -s
 ```
 
 ## Configuração
@@ -51,7 +85,6 @@ Crie um arquivo `.tsetup.json` na raiz do seu projeto:
 
 - **`setup-commands`**: Array de comandos shell executados antes de criar os aliases
 - **`alias`**: Objeto com pares nome/comando para criar aliases
-  - String vazia (`""`) remove um alias existente
   - Comandos são automaticamente escapados para uso seguro
 
 ## Locais de Busca
@@ -70,15 +103,4 @@ A busca sobe diretórios automaticamente até encontrar uma configuração.
 - `TSETUP_CONFIG`: Força uso de arquivo específico
 - `TSETUP_PROGRAM`: Muda prefixo do arquivo (padrão: `tsetup`)
 
-## Vantagens
-
-- **Isolamento**: Aliases ficam específicos por projeto
-- **Simplicidade**: Um arquivo JSON simples
-- **Flexibilidade**: Comandos de setup + aliases
-- **Portabilidade**: Funciona em diferentes shells e versões
-- **Limpeza**: Remove aliases quando não precisar mais
-
-## Dependências
-
-- `bash` ou `zsh`
-- `jq` (recomendado, mas funciona sem ele usando Python como fallback)
+Aviso: 100% feito com IA ;-;
