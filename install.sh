@@ -113,9 +113,10 @@ main() {
     shell_config=$(get_shell_config "$os")
     log_info "Arquivo de configuração: $shell_config"
     
-    # Adiciona linha em branco para separação
-    local blank_line=""
-    add_line_if_missing "$shell_config" "$blank_line" "Linha em branco"
+    # Adiciona duas linhas em branco para separação
+    echo "" >> "$shell_config"
+    echo "" >> "$shell_config"
+    log_success "Duas linhas em branco adicionadas a $shell_config"
     
     # Adiciona comentário explicativo
     local comment="# tsetup - aliases por projeto"
