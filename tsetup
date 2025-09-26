@@ -1,0 +1,269 @@
+#!/bin/bash
+# tsetup - carregador de aliases por projeto + pré-comandos
+#
+# DESCRIÇÃO:
+#   Sistema simples para criar aliases e executar comandos de setup por projeto.
+#   Procura arquivo de configuração .tsetup.json (ou .tsetup) na raiz do projeto
+#   ou dentro das pastas .vscode, .cursor, .venv (subindo diretórios se necessário).
+#
+# USO:
+#   source tsetup                 # carrega configuração e cria aliases
+#   source tsetup -s              # mostra aliases e comandos configurados
+#   source tsetup --show-aliases  # mostra aliases e comandos configurados
+#
+# CONFIGURAÇÃO (.tsetup.json):
+#   {
+#     "setup-commands": ["echo Terminal configurado", "export VAR=value"],
+#     "alias": {
+#       "b": "ninja -C build/",
+#       "f": "ninja -C build/ flash",
+#       "clean": ""
+#     }
+#   }
+#   - setup-commands: array de comandos executados antes de criar aliases
+#   - alias: objeto com nome->comando (string vazia remove alias existente)
+#
+# VARIÁVEIS OPCIONAIS:
+#   TSETUP_CONFIG=/path/arquivo.json  # força um arquivo específico
+#   TSETUP_PROGRAM=tsetup             # muda o prefixo (.tsetup.json -> .<nome>.json)
+
+# ---- helpers ----
+
+_tsetup_err() { printf "[tsetup] %s\n" "$*" >&2; }
+_tsetup_log() { printf "[tsetup] %s\n" "$*"; }
+
+# Escapa comando para usar com 'alias' (usando aspas simples)
+_tsetup_escape_for_alias() {
+  local s="$*"
+  # Para aspas simples, só precisamos escapar aspas simples
+  s="${s//\'/\'\\\'\'}"  # escapa ' como '\''
+  printf "%s" "$s"
+}
+
+# Caminha diretórios para cima procurando arquivos
+_tsetup_find_config() {
+  local start_dir="$PWD"
+  local program="${TSETUP_PROGRAM:-tsetup}"
+
+  # Se TSETUP_CONFIG apontar direto, use
+  if [[ -n "${TSETUP_CONFIG:-}" ]]; then
+    [[ -f "$TSETUP_CONFIG" ]] && { printf "%s" "$TSETUP_CONFIG"; return 0; }
+    _tsetup_err "TSETUP_CONFIG aponta para arquivo inexistente: $TSETUP_CONFIG"
+    return 1
+  fi
+
+  # Ordem de procura em cada nível: raiz, .vscode, .cursor, .venv
+  local candidates=(
+    ".${program}.json" ".${program}"
+    ".vscode/.${program}.json" ".vscode/.${program}"
+    ".cursor/.${program}.json" ".cursor/.${program}"
+    ".venv/.${program}.json"   ".venv/.${program}"
+  )
+
+  local dir="$start_dir"
+  while :; do
+    for c in "${candidates[@]}"; do
+      if [[ -f "$dir/$c" ]]; then
+        printf "%s" "$dir/$c"
+        return 0
+      fi
+    done
+    # sobe um nível
+    [[ "$dir" == "/" ]] && break
+    dir="$(cd "$dir/.." && pwd -P)"
+  done
+
+  return 1
+}
+
+# Lê JSON e imprime:
+#   linhas "SETUP<TAB><comando>"
+#   linhas "ALIAS<TAB><nome><TAB><comando_ou_vazio>"
+_tsetup_parse_json() {
+  local file="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    # setup-commands
+    jq -r '
+      .["setup-commands"] // [] | .[]
+    ' "$file" | while IFS= read -r cmd; do
+      printf "SETUP\t%s\n" "$cmd"
+    done
+
+    # alias
+    jq -r '
+      .alias // {} | to_entries[] | [.key, (.value // "")] | @tsv
+    ' "$file" | while IFS=$'\t' read -r name val; do
+      printf "ALIAS\t%s\t%s\n" "$name" "$val"
+    done
+
+  else
+    # fallback python
+    python - "$file" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+for cmd in (data.get("setup-commands") or []):
+    # preserva exatamente a string
+    print("SETUP\t" + str(cmd))
+
+for k, v in (data.get("alias") or {}).items():
+    print("ALIAS\t%s\t%s" % (k, "" if v is None else str(v)))
+PY
+  fi
+}
+
+# Guarda lista de aliases carregados para poder limpar depois
+_tsetup_state_var="__TSETUP_LOADED_ALIASES"
+
+# Mostra aliases e comandos de setup configurados
+_tsetup_show_aliases() {
+  local cfg="$1"
+  
+  _tsetup_log "Configuração encontrada em: $cfg"
+  echo ""
+  
+  # Parseia e mostra
+  local has_setup=false
+  local has_aliases=false
+  
+  while IFS= read -r line; do
+    IFS=$'\t' read -r kind rest <<<"$line"
+    
+    if [[ "$kind" == "SETUP" ]]; then
+      if [[ "$has_setup" == false ]]; then
+        _tsetup_log "📋 Comandos de setup:"
+        has_setup=true
+      fi
+      cmd="${line#SETUP	}"  # tudo após a primeira tab
+      printf "  • %s\n" "$cmd"
+    fi
+  done < <(_tsetup_parse_json "$cfg")
+  
+  [[ "$has_setup" == true ]] && echo ""
+  
+  while IFS= read -r line; do
+    IFS=$'\t' read -r kind name value <<<"$line"
+    [[ "$kind" == "ALIAS" ]] || continue
+    [[ -n "$name" ]] || continue
+    
+    if [[ "$has_aliases" == false ]]; then
+      _tsetup_log "🔗 Aliases configurados:"
+      has_aliases=true
+    fi
+    
+    if [[ -z "$value" ]]; then
+      printf "  • %-12s → %s\n" "$name" "(remove alias existente)"
+    else
+      printf "  • %-12s → %s\n" "$name" "$value"
+    fi
+  done < <(_tsetup_parse_json "$cfg")
+  
+  if [[ "$has_setup" == false && "$has_aliases" == false ]]; then
+    _tsetup_log "⚠️  Nenhum comando ou alias configurado."
+  fi
+}
+
+# ---- main ----
+
+# Verifica se foi sourçado (compatível com bash e zsh)
+# Exceção: permite execução direta para -s e --show-aliases
+_tsetup_is_sourced=true
+if [[ -n "${ZSH_VERSION:-}" ]]; then
+  # zsh: quando sourçado, ${(%):-%x} retorna o caminho do arquivo
+  # quando executado, ${(%):-%x} retorna apenas o nome do shell
+  _zsh_script_name="${(%):-%x}"
+  if [[ "$_zsh_script_name" == "zsh" ]] || [[ "$_zsh_script_name" == *"/zsh" ]] || [[ ! "$_zsh_script_name" == *"tsetup"* ]]; then
+    _tsetup_is_sourced=false
+  fi
+elif [[ -n "${BASH_VERSION:-}" ]]; then
+  # bash
+  if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    _tsetup_is_sourced=false
+  fi
+fi
+
+# Se não foi sourçado, só permite -s/--show-aliases
+if [[ "$_tsetup_is_sourced" == false ]]; then
+  case "${1:-}" in
+    -s|--show-aliases)
+      # OK, pode executar diretamente
+      ;;
+    *)
+      _tsetup_err "Este script deve ser 'sourçado':  source tsetup"
+      _tsetup_err "Para apenas ver aliases: ./tsetup -s ou tsetup -s"
+      exit 1
+      ;;
+  esac
+fi
+
+# inicializa state array se não existir
+if ! declare -p "$_tsetup_state_var" >/dev/null 2>&1; then
+  declare -a "$_tsetup_state_var"
+fi
+
+case "${1:-}" in
+  -s|--show-aliases)
+    cfg="$(_tsetup_find_config)" || {
+      _tsetup_err "Nenhuma configuração .tsetup.json encontrada"
+      if [[ "$_tsetup_is_sourced" == false ]]; then
+        exit 1
+      else
+        return 1
+      fi
+    }
+    _tsetup_show_aliases "$cfg"
+    if [[ "$_tsetup_is_sourced" == false ]]; then
+      exit 0
+    else
+      return 0
+    fi
+    ;;
+esac
+
+cfg="$(_tsetup_find_config)" || {
+  return 1
+}
+
+# Limpa aliases carregados anteriormente (sempre ao carregar nova configuração)
+
+# Parseia config
+while IFS= read -r line; do
+  _lines+=("$line")
+done < <(_tsetup_parse_json "$cfg")
+
+# Executa setup-commands
+for line in "${_lines[@]}"; do
+  IFS=$'\t' read -r kind rest <<<"$line"
+  if [[ "$kind" == "SETUP" ]]; then
+    cmd="${line#SETUP	}"  # tudo após a primeira tab
+    eval "$cmd"
+  fi
+done
+
+# Cria/Remove aliases
+for line in "${_lines[@]}"; do
+  IFS=$'\t' read -r kind name value <<<"$line"
+  [[ "$kind" == "ALIAS" ]] || continue
+
+  if [[ -z "$name" ]]; then
+    _tsetup_err "entrada de alias sem nome - ignorada."
+    continue
+  fi
+
+  if [[ -z "$value" ]]; then
+    # string vazia => remove alias
+    unalias "$name" 2>/dev/null || true
+    continue
+  fi
+
+  # cria alias escapando apropriadamente
+  local_escaped="$(_tsetup_escape_for_alias "$value")"
+  eval "alias $name='$local_escaped'"
+  eval "${_tsetup_state_var}+=(\"$name\")"
+done
+
+_tsetup_log "config carregada de: $cfg"
+return 0

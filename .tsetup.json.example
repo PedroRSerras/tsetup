@@ -1,0 +1,15 @@
+{
+  "setup-commands": [
+    "echo ESP-IDF Terminal",
+    ". $HOME/esp/v4.4.8/esp-idf/export.sh"
+  ],
+  "alias": {
+    "rmb": "rm -rf build/",
+    "b": "idf.py build",
+    "f": "idf.py flash",
+    "m": "mkdir -p logs && script -q \"logs/esp-$(date +%F_%H-%M-%S).ansi\" idf.py monitor",
+    "bf": "b && f",
+    "fm": "f && m",
+    "bfm": "b && f && m"
+  }
+}
